@@ -17,6 +17,7 @@ from core.session_manager import SessionManager
 from core.reaction_handler import ReactionHandler
 from models.schemas import MessageType, WebSocketMessage
 from api.avatar_ai import router as avatar_router
+from api.turn_credentials import router as turn_router
 
 load_dotenv()
 
@@ -62,6 +63,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(avatar_router)
+app.include_router(turn_router)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

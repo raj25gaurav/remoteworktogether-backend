@@ -1,0 +1,42 @@
+app = "remotework-turn"
+primary_region = "sin"       # Singapore — closest free region to India
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  TURN_REALM = "remoteworktogether"
+
+# TURN needs a static IPv4 so browsers can reach it reliably
+[services]
+  # Primary STUN/TURN port — UDP + TCP
+  [[services.ports]]
+    port = 3478
+    handlers = []
+
+  [[services.tcp_checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+
+# Expose UDP for STUN/TURN signaling
+[[services]]
+  protocol = "udp"
+  internal_port = 3478
+
+  [[services.ports]]
+    port = 3478
+
+# Dedicated relay UDP range for media
+[[services]]
+  protocol = "udp"
+  internal_port = 49152
+
+  [[services.ports]]
+    port = 49152
+    handlers = []
+
+[resources]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 256
