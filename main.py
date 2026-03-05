@@ -47,24 +47,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — include production frontend URL from env + all localhost variants for dev
-_frontend_url = os.getenv("FRONTEND_URL", "")
-_allowed_origins = [
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "http://localhost:5174",
-    "http://localhost:5175",
-    "http://localhost:5176",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:5174",
-    "http://127.0.0.1:3000",
-]
-if _frontend_url:
-    _allowed_origins.append(_frontend_url)
+# CORS — allow all origins for local development and deployed frontend
+_allowed_origins = ["*"]
 
+# (Optional: If we don't want to use "*", we could keep the list below)
+# We will just use ["*"] as per the request to allow localhost reliably.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_allowed_origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
