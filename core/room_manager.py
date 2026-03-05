@@ -62,10 +62,10 @@ class RoomManager:
         room = self.rooms.get(room_id)
         if room and user_id in room.members:
             room.members.remove(user_id)
-        # Clean up empty private rooms
-        if room and room.id != LOBBY_ID and room.is_private and not room.members:
+        # Only auto-delete a private room when the CREATOR leaves and it's empty
+        if room and room.id != LOBBY_ID and room.is_private and not room.members and room.created_by == user_id:
             del self.rooms[room.id]
-            logger.info(f"Empty private room {room.id} deleted.")
+            logger.info(f"Private room {room.id} deleted (creator left and room is empty).")
 
     def room_exists(self, room_id: str) -> bool:
         return room_id in self.rooms

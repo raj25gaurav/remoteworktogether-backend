@@ -226,18 +226,38 @@ async def handle_message(user_id: str, msg_type: str, payload: dict):
             emoji=emoji,
         )
         connection_manager.add_room(room.id)
-        room_manager.add_member(room.id, user_id)
 
-        await connection_manager.send_personal(user_id, {
-            "type": MessageType.ROOM_CREATE,
-            "payload": {"room": room.model_dump()},
+        # ── Immediately move creator into the new room ──────────────────────
+        old_room = user.room_id
+        room_manager.remove_member(old_room, user_id)
+        connection_manager.move_user_to_room(user_id, old_room, room.id)
+        room_manager.add_member(room.id, user_id)
+        session_manager.update_user_room(user_id, room.id)
+
+        # Notify everyone in the old room that creator left
+        await connection_manager.broadcast_to_room(old_room, {
+            "type": MessageType.ROOM_LEAVE,
+            "payload": {"user_id": user_id, "username": user.username, "room_id": old_room},
             "timestamp": time.time(),
         })
 
-        # Broadcast updated room list to everyone
+        # Broadcast updated room list to everyone (includes new room)
         await connection_manager.broadcast_to_all({
             "type": MessageType.ROOM_UPDATE,
             "payload": {"rooms": room_manager.get_rooms_as_dict()},
+            "timestamp": time.time(),
+        })
+
+        # Tell creators client about the new room and that they moved into it
+        await connection_manager.send_personal(user_id, {
+            "type": MessageType.USER_LIST,
+            "payload": {
+                "users": session_manager.get_users_as_dict(),
+                "rooms": room_manager.get_rooms_as_dict(),
+                "current_room_users": session_manager.get_users_as_dict(room.id),
+                "your_id": user_id,
+                "moved_to": room.id,
+            },
             "timestamp": time.time(),
         })
 
@@ -298,6 +318,20 @@ async def handle_message(user_id: str, msg_type: str, payload: dict):
             "timestamp": time.time(),
         })
 
+        # Broadcast updated rooms + user info to everyone so sidebar stays in sync
+        await connection_manager.broadcast_to_all({
+            "type": MessageType.ROOM_UPDATE,
+            "payload": {"rooms": room_manager.get_rooms_as_dict()},
+            "timestamp": time.time(),
+        })
+        # Broadcast the user's updated room_id to everyone
+        await connection_manager.broadcast_to_all({
+            "type": MessageType.USER_JOIN,
+            "payload": {"user": user.model_dump(), "room_id": target_room_id},
+            "timestamp": time.time(),
+        })
+
+
     # ── Room Invite ───────────────────────────────────────────────────────────
     elif msg_type == MessageType.ROOM_INVITE:
         target_user_id = payload.get("target_user_id")
@@ -351,6 +385,11 @@ async def handle_disconnect(user_id: str):
     if user:
         room_id = user.room_id
         room_manager.remove_member(room_id, user_id)
+
+        # If the room was deleted (creator left empty private room), clean up connection_manager too
+        if not room_manager.room_exists(room_id) and room_id != "lobby":
+            connection_manager.remove_room(room_id)
+
         connection_manager.disconnect(user_id)
         session_manager.remove_user(user_id)
 
@@ -363,7 +402,15 @@ async def handle_disconnect(user_id: str):
             },
             "timestamp": time.time(),
         })
+
+        # Broadcast updated rooms so clients remove deleted cabins from sidebar
+        await connection_manager.broadcast_to_all({
+            "type": MessageType.ROOM_UPDATE,
+            "payload": {"rooms": room_manager.get_rooms_as_dict()},
+            "timestamp": time.time(),
+        })
         logger.info(f"User {user.username} ({user_id}) disconnected")
+
 
 
 # ──────────────────────────────────────────────────────────────────────────────
