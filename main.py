@@ -17,6 +17,7 @@ from core.session_manager import SessionManager
 from core.reaction_handler import ReactionHandler
 from models.schemas import MessageType, WebSocketMessage
 from api.avatar_ai import router as avatar_router
+from api.user_auth import router as auth_router
 
 load_dotenv()
 
@@ -62,6 +63,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(avatar_router)
+app.include_router(auth_router)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -91,6 +93,14 @@ async def health():
         "rooms": len(room_manager.rooms),
         "timestamp": time.time(),
     }
+
+
+@app.get("/api/online")
+async def get_online_ids():
+    """Returns the list of currently connected WebSocket user IDs.
+    Used by the frontend friends panel to show live online/offline status.
+    """
+    return {"online_ids": list(connection_manager.active_connections.keys())}
 
 
 @app.api_route("/api/join", methods=["GET", "POST"])
