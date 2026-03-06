@@ -241,3 +241,112 @@ def db_get_friend_suggestions(user_id: str, online_user_ids: List[str]) -> List[
     except Exception as e:
         print(f"[DB] get_friend_suggestions error: {e}")
         return []
+
+
+# ── Friend Requests ───────────────────────────────────────────────────────────
+
+def db_send_friend_request(from_id: str, to_id: str) -> Dict:
+    """Send a friend request. Returns error if already sent/friends."""
+    try:
+        db = get_db()
+        # Check if request or friendship already exists
+        existing = db.table("rwt_friend_requests").select("*").or_(
+            f"and(from_id.eq.{from_id},to_id.eq.{to_id})",
+            f"and(from_id.eq.{to_id},to_id.eq.{from_id})"
+        ).execute()
+        if existing.data:
+            status = existing.data[0]["status"]
+            if status == "accepted":
+                return {"ok": False, "detail": "You are already friends!"}
+            if status == "pending":
+                return {"ok": False, "detail": "Friend request already sent!"}
+        req_id = secrets.token_hex(8)
+        db.table("rwt_friend_requests").insert({
+            "id": req_id,
+            "from_id": from_id,
+            "to_id": to_id,
+            "status": "pending",
+            "created_at": time.time(),
+        }).execute()
+        return {"ok": True, "request_id": req_id}
+    except Exception as e:
+        print(f"[DB] send_friend_request error: {e}")
+        return {"ok": False, "detail": str(e)}
+
+
+def db_respond_friend_request(request_id: str, responder_id: str, accept: bool) -> Dict:
+    """Accept or reject a pending friend request."""
+    try:
+        db = get_db()
+        res = db.table("rwt_friend_requests").select("*").eq("id", request_id).limit(1).execute()
+        if not res.data:
+            return {"ok": False, "detail": "Request not found"}
+        req = res.data[0]
+        if req["to_id"] != responder_id:
+            return {"ok": False, "detail": "Not authorized"}
+        new_status = "accepted" if accept else "rejected"
+        db.table("rwt_friend_requests").update({"status": new_status}).eq("id", request_id).execute()
+        return {"ok": True, "status": new_status}
+    except Exception as e:
+        print(f"[DB] respond_friend_request error: {e}")
+        return {"ok": False, "detail": str(e)}
+
+
+def db_get_pending_requests(user_id: str) -> List[Dict]:
+    """Get pending incoming friend requests for a user."""
+    try:
+        db = get_db()
+        res = db.table("rwt_friend_requests").select("*, rwt_users!from_id(id,display_name,avatar,profession)").eq("to_id", user_id).eq("status", "pending").execute()
+        return res.data or []
+    except Exception as e:
+        print(f"[DB] get_pending_requests error: {e}")
+        return []
+
+
+def db_get_friends(user_id: str, online_user_ids: List[str]) -> List[Dict]:
+    """Get all accepted friends with online status."""
+    try:
+        db = get_db()
+        res = db.table("rwt_friend_requests").select("*").or_(
+            f"and(from_id.eq.{user_id},status.eq.accepted)",
+            f"and(to_id.eq.{user_id},status.eq.accepted)"
+        ).execute()
+        friend_ids = []
+        for r in (res.data or []):
+            fid = r["to_id"] if r["from_id"] == user_id else r["from_id"]
+            friend_ids.append(fid)
+        if not friend_ids:
+            return []
+        friends = []
+        for fid in friend_ids:
+            u = db_get_user_by_id(fid)
+            if u:
+                friends.append({
+                    "id": u["id"],
+                    "username": u["username"],
+                    "display_name": u["display_name"],
+                    "avatar": u["avatar"],
+                    "profession": u.get("profession", ""),
+                    "is_online": u["id"] in online_user_ids,
+                    "last_seen": u.get("last_seen"),
+                })
+        friends.sort(key=lambda x: not x["is_online"])
+        return friends
+    except Exception as e:
+        print(f"[DB] get_friends error: {e}")
+        return []
+
+
+def db_get_request_status(from_id: str, to_id: str) -> str:
+    """Returns 'none' | 'pending' | 'accepted' | 'rejected'."""
+    try:
+        res = get_db().table("rwt_friend_requests").select("status").or_(
+            f"and(from_id.eq.{from_id},to_id.eq.{to_id})",
+            f"and(from_id.eq.{to_id},to_id.eq.{from_id})"
+        ).limit(1).execute()
+        if res.data:
+            return res.data[0]["status"]
+        return "none"
+    except Exception as e:
+        print(f"[DB] get_request_status error: {e}")
+        return "none"

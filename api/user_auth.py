@@ -11,6 +11,8 @@ from core.database import (
     db_save_feedback, db_get_friend_suggestions,
     db_get_time_stats, db_start_session, db_end_session,
     db_get_all_users,
+    db_send_friend_request, db_respond_friend_request,
+    db_get_pending_requests, db_get_friends, db_get_request_status,
 )
 
 router = APIRouter(prefix="/api", tags=["auth"])
@@ -45,6 +47,15 @@ class SessionEndRequest(BaseModel):
     session_id: str
     user_id: str
     location_type: str
+
+class FriendRequestCreate(BaseModel):
+    from_id: str
+    to_id: str
+
+class FriendRequestRespond(BaseModel):
+    request_id: str
+    responder_id: str
+    accept: bool
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -148,6 +159,64 @@ async def all_users(online_ids: str = ""):
             "last_seen": u.get("last_seen"),
         })
     return {"users": result}
+
+
+# ── Friend Requests ───────────────────────────────────────────────────────────
+
+@router.post("/friends/request")
+async def send_friend_request(req: FriendRequestCreate):
+    result = db_send_friend_request(req.from_id, req.to_id)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("detail", "Failed"))
+    return result
+
+@router.post("/friends/respond")
+async def respond_friend_request(req: FriendRequestRespond):
+    result = db_respond_friend_request(req.request_id, req.responder_id, req.accept)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("detail", "Failed"))
+    return result
+
+@router.get("/friends/pending/{user_id}")
+async def get_pending(user_id: str):
+    requests = db_get_pending_requests(user_id)
+    return {"requests": requests}
+
+@router.get("/friends/list/{user_id}")
+async def get_friends(user_id: str, online_ids: str = ""):
+    online_list = [x for x in online_ids.split(",") if x]
+    friends = db_get_friends(user_id, online_list)
+    return {"friends": friends}
+
+@router.get("/friends/status")
+async def get_friend_status(from_id: str, to_id: str):
+    status = db_get_request_status(from_id, to_id)
+    return {"status": status}
+
+
+# ── Productivity Score (based on real session data) ───────────────────────────
+
+@router.get("/score/{user_id}")
+async def get_score(user_id: str):
+    """Compute a productivity score (0-100) from session data."""
+    import time as _time
+    stats = db_get_time_stats(user_id)
+    lobby = stats.get("total_lobby_seconds", 0) or 0
+    cabin = stats.get("total_cabin_seconds", 0) or 0
+    total = lobby + cabin
+    # Scale: 1 hour = 20 pts, 2h = 40 pts ... max 100 at 5h
+    time_score = min(60, int((total / 18000) * 60))
+    # Bonus for cabin use (active collaboration)
+    collab_bonus = min(20, int((cabin / max(1, total)) * 20))
+    # Bonus for having profile filled (static)
+    user = db_get_user_by_id(user_id)
+    profile_bonus = 0
+    if user:
+        if user.get("interests"): profile_bonus += 10
+        if user.get("bio"): profile_bonus += 5
+        if user.get("profession"): profile_bonus += 5
+    score = min(100, time_score + collab_bonus + profile_bonus)
+    return {"score": max(5, score)}
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
