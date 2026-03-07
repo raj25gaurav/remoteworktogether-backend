@@ -6,6 +6,7 @@ import os
 import time
 import hashlib
 import secrets
+import uuid
 from typing import Optional, List, Dict, Any
 from supabase import create_client, Client
 
@@ -270,7 +271,7 @@ def db_send_friend_request(from_id: str, to_id: str) -> Dict:
             }).eq("id", req["id"]).execute()
             return {"ok": True}
 
-        req_id = secrets.token_hex(8)
+        req_id = str(uuid.uuid4())
         db.table("rwt_friend_requests").insert({
             "id": req_id,
             "from_id": from_id,
