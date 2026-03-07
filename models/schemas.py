@@ -58,6 +58,7 @@ class User(BaseModel):
     is_muted: bool = False
     is_camera_off: bool = False
     color: str = "#6366f1"
+    db_user_id: Optional[str] = None
 
 
 class Room(BaseModel):

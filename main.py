@@ -104,11 +104,11 @@ async def get_online_ids():
 
 
 @app.api_route("/api/join", methods=["GET", "POST"])
-async def join(username: str = Query(...), avatar: str = Query("astronaut")):
+async def join(username: str = Query(...), avatar: str = Query("astronaut"), db_user_id: str = Query(None)):
     """Create a user session and return credentials."""
     if not username or len(username.strip()) < 1 or len(username) > 30:
         raise HTTPException(status_code=400, detail="Invalid username")
-    user = session_manager.create_user(username.strip(), avatar)
+    user = session_manager.create_user(username.strip(), avatar, db_user_id)
     return {"user": user.model_dump()}
 
 

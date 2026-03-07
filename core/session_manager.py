@@ -20,7 +20,7 @@ class SessionManager:
         self.users: Dict[str, User] = {}
         self._color_index = 0
 
-    def create_user(self, username: str, avatar: str = "astronaut") -> User:
+    def create_user(self, username: str, avatar: str = "astronaut", db_user_id: Optional[str] = None) -> User:
         user_id = str(uuid.uuid4())[:12]
         color = USER_COLORS[self._color_index % len(USER_COLORS)]
         self._color_index += 1
@@ -37,6 +37,7 @@ class SessionManager:
             status=UserStatus.ONLINE,
             room_id="lobby",
             color=color,
+            db_user_id=db_user_id,
         )
         self.users[user_id] = user
         logger.info(f"User created: {username} ({user_id})")

@@ -176,7 +176,9 @@ async def all_users(online_ids: str = ""):
 @router.post("/friends/request")
 async def send_friend_request(req: FriendRequestCreate):
     result = db_send_friend_request(req.from_id, req.to_id)
-    if not result.get("ok"):
+    # Don't throw 400 if it's "Already friends" or "Already sent"
+    # The frontend catches `result.ok` anyway!
+    if not result.get("ok") and "error" in result.get("detail", "").lower():
         raise HTTPException(400, result.get("detail", "Failed"))
     return result
 
