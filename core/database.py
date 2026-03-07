@@ -249,17 +249,19 @@ def db_send_friend_request(from_id: str, to_id: str) -> Dict:
     """Send a friend request. Returns error if already sent/friends."""
     try:
         db = get_db()
-        # Check if request or friendship already exists
-        existing = db.table("rwt_friend_requests").select("*").or_(
-            f"and(from_id.eq.{from_id},to_id.eq.{to_id})",
-            f"and(from_id.eq.{to_id},to_id.eq.{from_id})"
-        ).execute()
-        if existing.data:
-            status = existing.data[0]["status"]
+        # Two separate queries to avoid complex PostgREST OR
+        r1 = db.table("rwt_friend_requests").select("status").eq("from_id", from_id).eq("to_id", to_id).limit(1).execute()
+        r2 = db.table("rwt_friend_requests").select("status").eq("from_id", to_id).eq("to_id", from_id).limit(1).execute()
+        existing = (r1.data or []) + (r2.data or [])
+        if existing:
+            status = existing[0]["status"]
             if status == "accepted":
                 return {"ok": False, "detail": "You are already friends!"}
             if status == "pending":
                 return {"ok": False, "detail": "Friend request already sent!"}
+            # If rejected, allow re-sending by updating status back to pending
+            db.table("rwt_friend_requests").update({"status": "pending", "created_at": time.time()}).eq("from_id", from_id).eq("to_id", to_id).execute()
+            return {"ok": True}
         req_id = secrets.token_hex(8)
         db.table("rwt_friend_requests").insert({
             "id": req_id,
@@ -286,35 +288,40 @@ def db_respond_friend_request(request_id: str, responder_id: str, accept: bool) 
             return {"ok": False, "detail": "Not authorized"}
         new_status = "accepted" if accept else "rejected"
         db.table("rwt_friend_requests").update({"status": new_status}).eq("id", request_id).execute()
-        return {"ok": True, "status": new_status}
+        # Return from_id so frontend knows who to update
+        return {"ok": True, "status": new_status, "from_id": req["from_id"], "to_id": req["to_id"]}
     except Exception as e:
         print(f"[DB] respond_friend_request error: {e}")
         return {"ok": False, "detail": str(e)}
 
 
 def db_get_pending_requests(user_id: str) -> List[Dict]:
-    """Get pending incoming friend requests for a user."""
+    """Get pending incoming friend requests, enriched with sender info."""
     try:
         db = get_db()
-        res = db.table("rwt_friend_requests").select("*, rwt_users!from_id(id,display_name,avatar,profession)").eq("to_id", user_id).eq("status", "pending").execute()
-        return res.data or []
+        res = db.table("rwt_friend_requests").select("*").eq("to_id", user_id).eq("status", "pending").execute()
+        enriched = []
+        for row in (res.data or []):
+            sender = db_get_user_by_id(row["from_id"])
+            enriched.append({
+                **row,
+                "sender_display_name": sender["display_name"] if sender else "Unknown",
+                "sender_avatar": sender["avatar"] if sender else "astronaut",
+                "sender_profession": sender.get("profession", "") if sender else "",
+            })
+        return enriched
     except Exception as e:
         print(f"[DB] get_pending_requests error: {e}")
         return []
 
 
 def db_get_friends(user_id: str, online_user_ids: List[str]) -> List[Dict]:
-    """Get all accepted friends with online status."""
+    """Get all accepted friends (two-direction) with online status."""
     try:
         db = get_db()
-        res = db.table("rwt_friend_requests").select("*").or_(
-            f"and(from_id.eq.{user_id},status.eq.accepted)",
-            f"and(to_id.eq.{user_id},status.eq.accepted)"
-        ).execute()
-        friend_ids = []
-        for r in (res.data or []):
-            fid = r["to_id"] if r["from_id"] == user_id else r["from_id"]
-            friend_ids.append(fid)
+        sent = db.table("rwt_friend_requests").select("to_id").eq("from_id", user_id).eq("status", "accepted").execute()
+        recv = db.table("rwt_friend_requests").select("from_id").eq("to_id", user_id).eq("status", "accepted").execute()
+        friend_ids = [r["to_id"] for r in (sent.data or [])] + [r["from_id"] for r in (recv.data or [])]
         if not friend_ids:
             return []
         friends = []
@@ -340,13 +347,70 @@ def db_get_friends(user_id: str, online_user_ids: List[str]) -> List[Dict]:
 def db_get_request_status(from_id: str, to_id: str) -> str:
     """Returns 'none' | 'pending' | 'accepted' | 'rejected'."""
     try:
-        res = get_db().table("rwt_friend_requests").select("status").or_(
-            f"and(from_id.eq.{from_id},to_id.eq.{to_id})",
-            f"and(from_id.eq.{to_id},to_id.eq.{from_id})"
-        ).limit(1).execute()
-        if res.data:
-            return res.data[0]["status"]
+        db = get_db()
+        r1 = db.table("rwt_friend_requests").select("status").eq("from_id", from_id).eq("to_id", to_id).limit(1).execute()
+        if r1.data:
+            return r1.data[0]["status"]
+        r2 = db.table("rwt_friend_requests").select("status").eq("from_id", to_id).eq("to_id", from_id).limit(1).execute()
+        if r2.data:
+            return r2.data[0]["status"]
         return "none"
     except Exception as e:
         print(f"[DB] get_request_status error: {e}")
         return "none"
+
+
+# ── Direct Messages ───────────────────────────────────────────────────────────
+
+def db_save_dm(from_id: str, to_id: str, content: str) -> Optional[Dict]:
+    """Save a direct message between two users."""
+    try:
+        row = {
+            "id": secrets.token_hex(10),
+            "from_id": from_id,
+            "to_id": to_id,
+            "content": content,
+            "created_at": time.time(),
+            "is_read": False,
+        }
+        res = get_db().table("rwt_direct_messages").insert(row).execute()
+        return res.data[0] if res.data else row
+    except Exception as e:
+        print(f"[DB] save_dm error: {e}")
+        return None
+
+
+def db_get_dm_history(user_a: str, user_b: str, limit: int = 60) -> List[Dict]:
+    """Get message history between two users, sorted oldest first."""
+    try:
+        db = get_db()
+        r1 = db.table("rwt_direct_messages").select("*").eq("from_id", user_a).eq("to_id", user_b).order("created_at").limit(limit).execute()
+        r2 = db.table("rwt_direct_messages").select("*").eq("from_id", user_b).eq("to_id", user_a).order("created_at").limit(limit).execute()
+        combined = (r1.data or []) + (r2.data or [])
+        combined.sort(key=lambda x: x.get("created_at", 0))
+        return combined[-limit:]
+    except Exception as e:
+        print(f"[DB] get_dm_history error: {e}")
+        return []
+
+
+def db_mark_dms_read(from_id: str, to_id: str):
+    """Mark all unread messages from `from_id` to `to_id` as read."""
+    try:
+        get_db().table("rwt_direct_messages").update({"is_read": True}).eq("from_id", from_id).eq("to_id", to_id).eq("is_read", False).execute()
+    except Exception as e:
+        print(f"[DB] mark_dms_read error: {e}")
+
+
+def db_get_unread_counts(user_id: str) -> Dict[str, int]:
+    """Number of unread DMs per sender for a given user."""
+    try:
+        res = get_db().table("rwt_direct_messages").select("from_id").eq("to_id", user_id).eq("is_read", False).execute()
+        counts: Dict[str, int] = {}
+        for row in (res.data or []):
+            fid = row["from_id"]
+            counts[fid] = counts.get(fid, 0) + 1
+        return counts
+    except Exception as e:
+        print(f"[DB] get_unread_counts error: {e}")
+        return {}

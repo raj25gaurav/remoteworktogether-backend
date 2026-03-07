@@ -13,6 +13,7 @@ from core.database import (
     db_get_all_users,
     db_send_friend_request, db_respond_friend_request,
     db_get_pending_requests, db_get_friends, db_get_request_status,
+    db_save_dm, db_get_dm_history, db_mark_dms_read, db_get_unread_counts,
 )
 
 router = APIRouter(prefix="/api", tags=["auth"])
@@ -56,6 +57,15 @@ class FriendRequestRespond(BaseModel):
     request_id: str
     responder_id: str
     accept: bool
+
+class DMSendRequest(BaseModel):
+    from_id: str
+    to_id: str
+    content: str
+
+class DMMarkReadRequest(BaseModel):
+    from_id: str   # the sender whose messages we are marking read
+    to_id: str     # the current user (reader)
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -217,6 +227,35 @@ async def get_score(user_id: str):
         if user.get("profession"): profile_bonus += 5
     score = min(100, time_score + collab_bonus + profile_bonus)
     return {"score": max(5, score)}
+
+
+# ── Direct Messages ───────────────────────────────────────────────────────────
+
+@router.post("/dm/send")
+async def send_dm(req: DMSendRequest):
+    if not req.content.strip():
+        raise HTTPException(400, "Message cannot be empty")
+    if len(req.content) > 2000:
+        raise HTTPException(400, "Message too long")
+    msg = db_save_dm(req.from_id, req.to_id, req.content.strip())
+    if not msg:
+        raise HTTPException(500, "Failed to save message")
+    return {"ok": True, "message": msg}
+
+@router.get("/dm/history")
+async def get_dm_history(user_a: str, user_b: str, limit: int = 60):
+    messages = db_get_dm_history(user_a, user_b, limit)
+    return {"messages": messages}
+
+@router.post("/dm/read")
+async def mark_read(req: DMMarkReadRequest):
+    db_mark_dms_read(req.from_id, req.to_id)
+    return {"ok": True}
+
+@router.get("/dm/unread/{user_id}")
+async def get_unread(user_id: str):
+    counts = db_get_unread_counts(user_id)
+    return {"unread": counts}
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
