@@ -212,7 +212,7 @@ def _similarity_score(me: Dict, other: Dict) -> int:
 
 
 def db_get_friend_suggestions(user_id: str, online_user_ids: List[str]) -> List[Dict]:
-    """Returns all users with similarity score + online status, sorted by score."""
+    """Returns all users with similarity score + online status + friendship status, sorted by score."""
     try:
         me = db_get_user_by_id(user_id)
         if not me:
@@ -222,18 +222,18 @@ def db_get_friend_suggestions(user_id: str, online_user_ids: List[str]) -> List[
         for u in others:
             score = _similarity_score(me, u)
             is_online = u["id"] in online_user_ids
+            status = db_get_request_status(user_id, u["id"])
             results.append({
                 "id": u["id"],
                 "username": u["username"],
                 "display_name": u["display_name"],
                 "avatar": u["avatar"],
-                "profession": u["profession"],
-                "interests": u["interests"],
+                "profession": u.get("profession", ""),
+                "interests": u.get("interests", []),
                 "similarity": score,
                 "is_online": is_online,
+                "status": status,  # "none" | "pending" | "accepted" | "rejected"
                 "last_seen": u.get("last_seen"),
-                "total_lobby_seconds": u.get("total_lobby_seconds", 0),
-                "total_cabin_seconds": u.get("total_cabin_seconds", 0),
             })
         # Sort: online first, then by similarity score
         results.sort(key=lambda x: (not x["is_online"], -x["similarity"]))
@@ -249,19 +249,27 @@ def db_send_friend_request(from_id: str, to_id: str) -> Dict:
     """Send a friend request. Returns error if already sent/friends."""
     try:
         db = get_db()
-        # Two separate queries to avoid complex PostgREST OR
-        r1 = db.table("rwt_friend_requests").select("status").eq("from_id", from_id).eq("to_id", to_id).limit(1).execute()
-        r2 = db.table("rwt_friend_requests").select("status").eq("from_id", to_id).eq("to_id", from_id).limit(1).execute()
+        # Check if request or friendship already exists (both directions)
+        r1 = db.table("rwt_friend_requests").select("*").eq("from_id", from_id).eq("to_id", to_id).limit(1).execute()
+        r2 = db.table("rwt_friend_requests").select("*").eq("from_id", to_id).eq("to_id", from_id).limit(1).execute()
         existing = (r1.data or []) + (r2.data or [])
+
         if existing:
-            status = existing[0]["status"]
+            req = existing[0]
+            status = req["status"]
             if status == "accepted":
                 return {"ok": False, "detail": "You are already friends!"}
             if status == "pending":
                 return {"ok": False, "detail": "Friend request already sent!"}
-            # If rejected, allow re-sending by updating status back to pending
-            db.table("rwt_friend_requests").update({"status": "pending", "created_at": time.time()}).eq("from_id", from_id).eq("to_id", to_id).execute()
+            # If rejected, allow re-sending by updating THIS specific row back to pending
+            db.table("rwt_friend_requests").update({
+                "from_id": from_id,  # Ensure current sender is the 'from'
+                "to_id": to_id,
+                "status": "pending",
+                "created_at": time.time()
+            }).eq("id", req["id"]).execute()
             return {"ok": True}
+
         req_id = secrets.token_hex(8)
         db.table("rwt_friend_requests").insert({
             "id": req_id,
@@ -274,8 +282,6 @@ def db_send_friend_request(from_id: str, to_id: str) -> Dict:
     except Exception as e:
         print(f"[DB] send_friend_request error: {e}")
         return {"ok": False, "detail": str(e)}
-
-
 def db_respond_friend_request(request_id: str, responder_id: str, accept: bool) -> Dict:
     """Accept or reject a pending friend request."""
     try:
