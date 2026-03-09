@@ -29,6 +29,22 @@ class RegisterRequest(BaseModel):
     bio: str = ""
     interests: List[str] = []
 
+class RegisterCandidateReq(BaseModel):
+    username: str
+    password: str
+    full_name: str
+    current_org: str
+    has_referral: bool = False
+    skills: List[str] = []
+    experience_years: int = 0
+    expected_salary: int = 0
+    bio: str = ""
+
+class RegisterOrganizationReq(BaseModel):
+    username: str
+    password: str
+    company_name: str
+
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -95,6 +111,79 @@ async def register(req: RegisterRequest):
         "ok": True,
         "user": _safe_user(user),
     }
+
+import json
+
+@router.post("/auth/register/candidate")
+async def register_candidate(req: RegisterCandidateReq):
+    username = req.username.strip().lower()
+    if len(username) < 2 or len(username) > 30:
+        raise HTTPException(400, "Username must be 2-30 characters")
+    if len(req.password) < 4:
+        raise HTTPException(400, "Password must be at least 4 characters")
+    
+    existing = db_get_user_by_username(username)
+    if existing:
+        raise HTTPException(409, "Username already taken.")
+        
+    # We store the platform details in the bio/profession for now as an MVP
+    bio_data = json.dumps({
+        "full_name": req.full_name,
+        "current_org": req.current_org,
+        "has_referral": req.has_referral,
+        "skills": req.skills,
+        "experience_years": req.experience_years,
+        "expected_salary": req.expected_salary,
+        "bio": req.bio
+    })
+    
+    user = db_create_user(
+        username=username,
+        password=req.password,
+        display_name=req.full_name,
+        avatar="astronaut",
+        profession="candidate",
+        bio=bio_data,
+        interests=[],
+    )
+    if not user:
+        raise HTTPException(500, "Could not create account.")
+    return {"ok": True, "user": _safe_user(user)}
+
+@router.post("/auth/register/organization")
+async def register_organization(req: RegisterOrganizationReq):
+    username = req.username.strip().lower()
+    if len(username) < 2 or len(username) > 30:
+        raise HTTPException(400, "Username must be 2-30 characters")
+    if len(req.password) < 4:
+        raise HTTPException(400, "Password must be at least 4 characters")
+    
+    existing = db_get_user_by_username(username)
+    if existing:
+        raise HTTPException(409, "Username already taken.")
+        
+    bio_data = json.dumps({"company_name": req.company_name})
+    
+    user = db_create_user(
+        username=username,
+        password=req.password,
+        display_name=req.company_name,
+        avatar="astronaut",
+        profession="organization",
+        bio=bio_data,
+        interests=[],
+    )
+    if not user:
+        raise HTTPException(500, "Could not create account.")
+    return {"ok": True, "user": _safe_user(user)}
+
+@router.get("/auth/stats")
+async def get_stats():
+    users = db_get_all_users()
+    candidates = sum(1 for u in users if u.get("profession") == "candidate")
+    orgs = sum(1 for u in users if u.get("profession") == "organization")
+    return {"candidates": candidates, "companies": orgs}
+
 
 
 @router.post("/auth/login")

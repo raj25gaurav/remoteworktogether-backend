@@ -64,6 +64,8 @@ app.add_middleware(
 # Include routers
 app.include_router(avatar_router)
 app.include_router(auth_router)
+from api.recruiter_ai import router as recruiter_router
+app.include_router(recruiter_router)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -215,17 +217,17 @@ async def handle_message(user_id: str, msg_type: str, payload: dict):
     # These three handlers are the ENTIRE signaling channel for WebRTC.
     # The backend acts as a pure relay: it forwards offer/answer/ice to the
     # target user with sender_id attached so the recipient knows who sent it.
-    elif msg_type in (MessageType.WEBRTC_OFFER, MessageType.WEBRTC_ANSWER, MessageType.WEBRTC_ICE):
-        target_id = payload.get("target_id")
-        if target_id and connection_manager.is_connected(target_id):
-            await connection_manager.send_personal(target_id, {
-                "type": msg_type,
-                "payload": payload,
-                "sender_id": user_id,   # ← recipient needs this to know who called them
-                "timestamp": time.time(),
-            })
-        else:
-            logger.warning(f"[WebRTC] Target {target_id} not connected, dropping {msg_type}")
+    # elif msg_type in (MessageType.WEBRTC_OFFER, MessageType.WEBRTC_ANSWER, MessageType.WEBRTC_ICE):
+    #     target_id = payload.get("target_id")
+    #     if target_id and connection_manager.is_connected(target_id):
+    #         await connection_manager.send_personal(target_id, {
+    #             "type": msg_type,
+    #             "payload": payload,
+    #             "sender_id": user_id,   # ← recipient needs this to know who called them
+    #             "timestamp": time.time(),
+    #         })
+    #     else:
+    #         logger.warning(f"[WebRTC] Target {target_id} not connected, dropping {msg_type}")
 
     # ── Room Create ───────────────────────────────────────────────────────────
     elif msg_type == MessageType.ROOM_CREATE:
@@ -368,15 +370,15 @@ async def handle_message(user_id: str, msg_type: str, payload: dict):
             })
 
     # ── WebRTC Signaling ──────────────────────────────────────────────────────
-    elif msg_type in [MessageType.WEBRTC_OFFER, MessageType.WEBRTC_ANSWER, MessageType.WEBRTC_ICE]:
-        target_id = payload.get("target_id")
-        if target_id:
-            await connection_manager.send_personal(target_id, {
-                "type": msg_type,
-                "payload": payload,
-                "sender_id": user_id,
-                "timestamp": time.time(),
-            })
+    # elif msg_type in [MessageType.WEBRTC_OFFER, MessageType.WEBRTC_ANSWER, MessageType.WEBRTC_ICE]:
+    #     target_id = payload.get("target_id")
+    #     if target_id:
+    #         await connection_manager.send_personal(target_id, {
+    #             "type": msg_type,
+    #             "payload": payload,
+    #             "sender_id": user_id,
+    #             "timestamp": time.time(),
+    #         })
 
     # ── Status Update ─────────────────────────────────────────────────────────
     elif msg_type == MessageType.STATUS_UPDATE:
