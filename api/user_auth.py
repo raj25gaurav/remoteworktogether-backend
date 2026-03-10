@@ -5,6 +5,7 @@ All persistent, user-facing data routes.
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
+import json
 from core.database import (
     db_create_user, db_get_user_by_username, db_get_user_by_id,
     verify_password, db_update_last_seen,
@@ -111,8 +112,6 @@ async def register(req: RegisterRequest):
         "ok": True,
         "user": _safe_user(user),
     }
-
-import json
 
 @router.post("/auth/register/candidate")
 async def register_candidate(req: RegisterCandidateReq):
